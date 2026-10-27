@@ -3,7 +3,7 @@
 
 import { fft, nextPow2 } from './fft.js';
 import * as rs from './rs.js';
-import { DIBIT_SECONDS, BUZZ_FREQUENCIES, SYNC_WORD, writeBuzz, writeDrone } from './tower-synth.js';
+import { DIBIT_SECONDS, BUZZ_FREQUENCIES, SYNC_WORD, writeBuzz, writeDrone, buzzTemplate } from './tower-synth.js';
 
 export const CONFIG = Object.freeze({
   protocol: 2,
@@ -142,28 +142,20 @@ export function synthesize(payload, sr, kind = 0) {
   return out;
 }
 
-function power(x, start, n, f, sr) {
-  const c = 2 * Math.cos((2 * Math.PI * f) / sr);
-  let s1 = 0, s2 = 0;
-  for (let i = start, end = start + n; i < end; i++) {
-    const s0 = x[i] + c * s1 - s2;
-    s2 = s1;
-    s1 = s0;
-  }
-  return s1 * s1 + s2 * s2 - c * s1 * s2;
-}
-
 function dibit(x, start, sr) {
-  const skip = Math.round(0.004 * sr), n = Math.round((DIBIT_SECONDS - 0.008) * sr);
   let best = 0, peak = -1, second = 0;
+  const n = Math.round(DIBIT_SECONDS * sr);
+  let energy = 0;
+  for (let j = 0; j < n; j++) energy += x[start + j] ** 2;
   for (let k = 0; k < 4; k++) {
-    const p = power(x, start + skip, n, BUZZ_FREQUENCIES[k], sr);
+    const { re, im, norm } = buzzTemplate(k, sr);
+    let a = 0, b = 0;
+    for (let j = 0; j < n; j++) { a += x[start + j] * re[j]; b += x[start + j] * im[j]; }
+    const p = (a * a + b * b) / (norm + 1e-12);
     if (p > peak) { second = peak; peak = p; best = k; }
     else if (p > second) second = p;
   }
-  let energy = 0;
-  for (let j = 0; j < n; j++) energy += x[start + skip + j] ** 2;
-  return { state: best, peak, margin: peak / (second + 1e-12), concentration: peak / (n * energy + 1e-12) };
+  return { state: best, peak, margin: peak / (second + 1e-12), concentration: peak / (energy + 1e-12) };
 }
 
 export function decodeSymbol(x, start, sr) {
@@ -177,18 +169,16 @@ export function decodeSymbol(x, start, sr) {
   return { byte, margin, concentration };
 }
 
-// Byte boundaries have a brief amplitude dip. Track it without relying on the
-// data state; this keeps long frames aligned when the two audio clocks drift.
-function trackBoundary(x, start, sr, limit) {
-  const half = Math.round(0.0015 * sr), step = Math.max(1, Math.round(0.0002 * sr));
-  const range = Math.round(0.0025 * sr);
-  let best = start, energy = Infinity;
-  for (let p = Math.max(half, start - range); p <= Math.min(limit - half, start + range); p += step) {
-    let e = 0;
-    for (let j = -half; j <= half; j++) { const v = x[p + j] - (x[p + j - 1] || 0); e += v * v; }
-    if (e < energy) { energy = e; best = p; }
+function trackBoundary(x, start, sr) {
+  const step = Math.max(1, Math.round(0.000125 * sr));
+  let best = start, score = -1;
+  for (let offset = -6; offset <= 6; offset++) {
+    const p = start + offset * step;
+    if (p < 0) continue;
+    const r = decodeSymbol(x, p, sr);
+    if (r.concentration > score) { score = r.concentration; best = p; }
   }
-  return best;
+  return score > 0.12 ? best : start;
 }
 
 // Streaming decoder. Finds preambles by FFT cross-correlation, then reads symbols at
@@ -292,10 +282,10 @@ export class Receiver {
     if (expected + this.symSpan + Math.round(0.004 * this.sr) > this.end) return false;
     const local = expected - this.base;
     const boundary = trackBoundary(this.buf, local, this.sr, this.len);
-    f.correction += 0.65 * (boundary - local);
+    f.correction += boundary - local;
     const s = f.dataStart + symbolStart(f.i, this.sr) + Math.round(f.correction);
     const decoded = decodeSymbol(this.buf, s - this.base, this.sr);
-    f.quiet = decoded.concentration < 0.02 ? (f.quiet || 0) + 1 : 0;
+    f.quiet = decoded.concentration < 0.05 ? (f.quiet || 0) + 1 : 0;
     if (f.quiet >= 8) {
       if (f.header) this.on.message?.({ kind: f.header.kind, payload: this.preview(f), ok: false, fixed: 0 });
       this.frame = null;
