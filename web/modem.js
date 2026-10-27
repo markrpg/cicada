@@ -3,6 +3,7 @@
 
 import { fft, nextPow2 } from './fft.js';
 import * as rs from './rs.js';
+import * as alien from './alien-synth.js';
 import { DIBIT_SECONDS, SYNC_WORD, writeBuzz, writeDrone, buzzTemplate, GRAIN_RATIOS } from './tower-synth.js';
 
 export const CONFIG = Object.freeze({
@@ -21,6 +22,16 @@ export const CONFIG = Object.freeze({
   frequencyLow: 50,
   frequencyHigh: 8000,
 });
+
+export const THEMES = Object.freeze([
+  Object.freeze({ id: 'cicada', name: 'Cicada', intro: CONFIG.intro }),
+  Object.freeze({ id: 'alien', name: 'Alien', intro: alien.INTRO_SECONDS }),
+]);
+const SIGNALS = { cicada: { SYNC_WORD, writeBuzz, writeDrone, buzzTemplate }, alien };
+function signal(theme) {
+  if (!Object.hasOwn(SIGNALS, theme)) throw new RangeError('Unknown sound theme');
+  return SIGNALS[theme];
+}
 
 const HEADER_DATA = 3;
 const HEADER_SYMBOLS = HEADER_DATA + CONFIG.headerParity;
@@ -92,26 +103,30 @@ export function frameSymbols(payload, kind = 0) {
 }
 
 const preambles = new Map();
-export function preamble(sr) {
+export function preamble(sr, theme = 'cicada') {
+  const source = signal(theme);
+  const key = `${sr}:${theme}`;
   validate(0, sr);
-  let out = preambles.get(sr);
+  let out = preambles.get(key);
   if (out) return out;
-  out = new Float32Array(Math.round(SYNC_WORD.length * DIBIT_SECONDS * sr));
-  SYNC_WORD.forEach((state, i) => writeBuzz(out, Math.round(i * DIBIT_SECONDS * sr), state, sr, i + 1));
-  preambles.set(sr, out);
+  out = new Float32Array(Math.round(source.SYNC_WORD.length * DIBIT_SECONDS * sr));
+  source.SYNC_WORD.forEach((state, i) => source.writeBuzz(out, Math.round(i * DIBIT_SECONDS * sr), state, sr, i + 1));
+  preambles.set(key, out);
   return out;
 }
 
-function writeSymbol(out, start, byte, sr, index) {
-  for (let d = 0; d < 4; d++) writeBuzz(out, start + Math.round(d * DIBIT_SECONDS * sr), (byte >> (6 - 2 * d)) & 3, sr, index * 4 + d + 1);
+function writeSymbol(out, start, byte, sr, index, theme) {
+  const { writeBuzz } = signal(theme);
+  for (let d = 0; d < 4; d++) writeBuzz(out, start + Math.round(d * DIBIT_SECONDS * sr), (byte >> (6 - 2 * d)) & 3, sr, index * 4 + d + 1, theme);
 }
 
 const symbolStart = (i, sr) => Math.round(i * CONFIG.symbolDur * sr);
 
-function layoutSamples(nSymbols, sr) {
+function layoutSamples(nSymbols, sr, theme) {
+  signal(theme);
   const lead = Math.round(CONFIG.lead * sr);
-  const syncStart = lead + Math.round(CONFIG.intro * sr);
-  const dataStart = syncStart + preamble(sr).length + Math.round(CONFIG.preambleGap * sr);
+  const syncStart = lead + Math.round(THEMES.find(t => t.id === theme).intro * sr);
+  const dataStart = syncStart + preamble(sr, theme).length + Math.round(CONFIG.preambleGap * sr);
   const dataEnd = dataStart + symbolStart(nSymbols, sr);
   const total = dataEnd + Math.round(CONFIG.tail * sr);
   // PCM and the AudioBuffer playback copy both need to fit this budget.
@@ -119,27 +134,27 @@ function layoutSamples(nSymbols, sr) {
   return { lead, syncStart, dataStart, dataEnd, total };
 }
 
-export function frameTiming(payloadLength, sampleRate = 48000) {
+export function frameTiming(payloadLength, sampleRate = 48000, theme = 'cicada') {
   validate(payloadLength, sampleRate);
   const symbols = symbolCount(payloadLength);
-  const s = layoutSamples(symbols, sampleRate);
-  return { symbols, total: s.total / sampleRate, introEnd: s.syncStart / sampleRate, dataStart: s.dataStart / sampleRate, dataEnd: s.dataEnd / sampleRate };
+  const s = layoutSamples(symbols, sampleRate, theme);
+  return { theme, symbolDur: CONFIG.symbolDur, symbols, total: s.total / sampleRate, introEnd: s.syncStart / sampleRate, dataStart: s.dataStart / sampleRate, dataEnd: s.dataEnd / sampleRate };
 }
 
-export function synthesize(payload, sr, kind = 0) {
+export function synthesize(payload, sr, kind = 0, theme = 'cicada') {
   validate(payload.length, sr);
   const symbols = frameSymbols(payload, kind);
-  const pre = preamble(sr);
-  const s = layoutSamples(symbols.length, sr);
+  const pre = preamble(sr, theme);
+  const s = layoutSamples(symbols.length, sr, theme);
   const out = new Float32Array(s.total);
   out.set(pre, s.syncStart);
-  symbols.forEach((b, i) => writeSymbol(out, s.dataStart + symbolStart(i, sr), b ^ mask(i), sr, i));
-  writeDrone(out, sr, s.dataEnd);
+  symbols.forEach((b, i) => writeSymbol(out, s.dataStart + symbolStart(i, sr), b ^ mask(i), sr, i, theme));
+  signal(theme).writeDrone(out, sr, s.dataEnd);
   return out;
 }
 
-function dibit(x, start, sr, seed) {
-  const { re, im } = buzzTemplate(seed, sr), n = re.length;
+function dibit(x, start, sr, seed, theme) {
+  const { re, im } = signal(theme).buzzTemplate(seed, sr), n = re.length;
   const skip = Math.round(0.008 * sr), tail = Math.round(0.002 * sr);
   let a = 0, b = 0, c = 0, d = 0, energy = 0, norm = 0;
   for (let i = skip; i < n - tail; i++) {
@@ -157,10 +172,10 @@ function dibit(x, start, sr, seed) {
   return { state: best, margin: 1 / (distance + 0.01), concentration: (first + second) / (norm * energy + 1e-12) };
 }
 
-export function decodeSymbol(x, start, sr, index = 0) {
+export function decodeSymbol(x, start, sr, index = 0, theme = 'cicada') {
   let byte = 0, margin = Infinity, concentration = 0;
   for (let d = 0; d < 4; d++) {
-    const r = dibit(x, start + Math.round(d * DIBIT_SECONDS * sr), sr, index * 4 + d + 1);
+    const r = dibit(x, start + Math.round(d * DIBIT_SECONDS * sr), sr, index * 4 + d + 1, theme);
     byte = (byte << 2) | r.state;
     margin = Math.min(margin, r.margin);
     concentration += r.concentration / 4;
@@ -168,13 +183,13 @@ export function decodeSymbol(x, start, sr, index = 0) {
   return { byte, margin, concentration };
 }
 
-function trackBoundary(x, start, sr, index) {
+function trackBoundary(x, start, sr, index, theme) {
   const step = Math.max(1, Math.round(0.000125 * sr));
   let best = start, score = -1;
   for (let offset = -6; offset <= 6; offset++) {
     const p = start + offset * step;
     if (p < 0) continue;
-    const r = decodeSymbol(x, p, sr, index);
+    const r = decodeSymbol(x, p, sr, index, theme);
     if (r.concentration > score) { score = r.concentration; best = p; }
   }
   return score > 0.12 ? best : start;
@@ -182,11 +197,12 @@ function trackBoundary(x, start, sr, index) {
 
 // Streaming decoder. Finds preambles by FFT cross-correlation, then reads symbols at
 // fixed offsets from the correlation peak.
-export class Receiver {
-  constructor(sampleRate, handlers = {}) {
+class ThemeReceiver {
+  constructor(sampleRate, handlers, theme) {
+    this.theme = theme;
     this.sr = sampleRate;
     this.on = handlers;
-    const tpl = preamble(sampleRate);
+    const tpl = preamble(sampleRate, theme);
     this.M = tpl.length;
     this.N = nextPow2(this.M * 3);
     this.margin = 512;
@@ -280,10 +296,10 @@ export class Receiver {
     const expected = f.dataStart + symbolStart(f.i, this.sr) + Math.round(f.correction);
     if (expected + this.symSpan + Math.round(0.004 * this.sr) > this.end) return false;
     const local = expected - this.base;
-    const boundary = trackBoundary(this.buf, local, this.sr, f.i);
+    const boundary = trackBoundary(this.buf, local, this.sr, f.i, this.theme);
     f.correction += boundary - local;
     const s = f.dataStart + symbolStart(f.i, this.sr) + Math.round(f.correction);
-    const decoded = decodeSymbol(this.buf, s - this.base, this.sr, f.i);
+    const decoded = decodeSymbol(this.buf, s - this.base, this.sr, f.i, this.theme);
     f.quiet = decoded.concentration < 0.05 ? (f.quiet || 0) + 1 : 0;
     if (f.quiet >= 8) {
       if (f.header) this.on.message?.({ kind: f.header.kind, payload: this.preview(f), ok: false, fixed: 0 });
@@ -362,4 +378,16 @@ export class Receiver {
     const ok = failedBlocks === 0 && new DataView(body.buffer).getUint32(header.length) === crc32(payload);
     return { kind: header.kind, payload, ok, fixed };
   }
+}
+
+// Run acquisition for both signatures. No theme setting is needed to listen.
+export class Receiver {
+  constructor(sampleRate, handlers = {}) {
+    this.receivers = THEMES.map(({ id }) => new ThemeReceiver(sampleRate, {
+      start: (data) => handlers.start?.({ ...data, theme: id, symbolDur: CONFIG.symbolDur }),
+      progress: (data) => handlers.progress?.({ ...data, theme: id, symbolDur: CONFIG.symbolDur }),
+      message: (data) => handlers.message?.({ ...data, theme: id }),
+    }, id));
+  }
+  push(chunk) { for (const receiver of this.receivers) receiver.push(chunk); }
 }

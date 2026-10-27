@@ -1,12 +1,12 @@
-// node tools/render-wav.js "some text" out.wav [sampleRate]
+// node tools/render-wav.js "some text" out.wav [sampleRate] [cicada|alien]
 import { writeFileSync } from 'node:fs';
 import { synthesize } from '../web/modem.js';
 import { packText } from '../web/packet.js';
 
-const [text = 'Hello from Cicada', out = 'cicada.wav', rate = '48000'] = process.argv.slice(2);
+const [text = 'Hello from Cicada', out = 'cicada.wav', rate = '48000', theme = 'cicada'] = process.argv.slice(2);
 const sr = Number(rate);
 const { kind, bytes } = await packText(text);
-const pcm = synthesize(bytes, sr, kind);
+const pcm = synthesize(bytes, sr, kind, theme);
 const wav = Buffer.alloc(44 + pcm.length * 2);
 wav.write('RIFF', 0); wav.writeUInt32LE(36 + pcm.length * 2, 4); wav.write('WAVEfmt ', 8);
 wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
