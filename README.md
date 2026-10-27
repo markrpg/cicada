@@ -59,4 +59,3 @@ npm test
 node tools/render-wav.js "your text" out.wav
 ```
 
-Private recordings, certificates, signing keys, local settings and build output are excluded from git. Release files require a separate content review.
