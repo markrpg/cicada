@@ -26,8 +26,7 @@ You can also pick a small file to send. Received files have a save button.
 
 On Mac, Cicada lives in the menu bar under the waveform icon. Closing its window stops the audio; the icon stays available to reopen it.
 
-Android needs version 10 or newer and may ask you to allow installation from your browser. The Mac app is ad-hoc signed, so a downloaded copy may need approval in **System Settings → Privacy & Security**. Both devices need version 0.2; the original APK uses a different sound protocol.
-
+Android needs version 10 or newer and may ask you to allow installation from your browser. The Mac app is ad-hoc signed, so a downloaded copy may need approval in **System Settings → Privacy & Security**.
 ## How much can it send?
 
 Start with a sentence. This is slow: a full 700-byte packet takes about 169 seconds. Compression can fit larger original text or files into that limit. Each transmission begins with a short drone before the data-bearing chatter starts.
