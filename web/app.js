@@ -71,7 +71,7 @@ function ensureCtx() {
 }
 
 const sampleRate = () => (A.ctx ? A.ctx.sampleRate : 48000);
-const symbolsOf = (t) => Math.max(1, Math.round((t.dataEnd - t.dataStart) / SYM));
+const symbolsOf = (t) => t.symbols || Math.max(1, Math.round((t.dataEnd - t.dataStart) / SYM));
 
 function micError(err) {
   switch (err && err.name) {
@@ -265,6 +265,7 @@ async function copyText(text, btn) {
 async function save(blob, name, btn) {
   try {
     const where = await saveBlob(blob, name);
+    if (where === null) return;
     Card.flash(btn, where ? `Saved to ${where}` : 'Saved', where ? 3200 : 1600);
   } catch (err) {
     toast(`Couldn't save ${name}: ${err.message || err}`);

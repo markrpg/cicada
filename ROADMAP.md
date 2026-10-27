@@ -10,8 +10,8 @@ Lanes: 1
 | M1 | Original modem and text/file packets | done | Nine original modem/packet tests passed | d205178 |
 | M2 | Neon web UI and original Android APK | done | Browser receive checked at desktop/mobile widths; debug APK built | 0a76460 |
 | M3 | Over-the-air Mac ↔ Android test | parked | Ten messages each way at 30 cm and 1 m, success rate recorded | |
-| M6 | Reference-C procedural data-bearing buzz | done | Sixteen tests pass, including long positive/negative clock drift, corruption recovery and exact 16-bit WAV decoding | 4882e60 |
-| M7 | Native Mac menu-bar shell and audio lifecycle | todo | Standalone app launches; loopback worklet proof; close/reopen stops audio safely | |
+| M6 | Reference-C procedural data-bearing buzz | done | Grain-pair sound feedback accepted; sixteen tests and exact WAV decode pass | 6baea7b |
+| M7 | Native Mac menu-bar shell and audio lifecycle | doing | Standalone app launches; loopback worklet proof; close/reopen stops audio safely | |
 | M8 | Integrate, package and privacy-review both apps | todo | Updated APK and Mac ZIP inspected; browser regressions checked; private artifact/history scan reviewed | |
 | M4 | Speed presets | todo | Each preset passes modem tests and real-device success check | |
 | M5 | Filming mode refinements | todo | Screenshot at phone and laptop sizes | |
