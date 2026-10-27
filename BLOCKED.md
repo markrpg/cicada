@@ -1,2 +1,0 @@
-- M3: [human-test] after the updated builds are ready, run both devices together and count ten messages each way at 30 cm and 1 m (since 2026-10-27)
-- M7: [human-test] verify native microphone permission/capture, clipboard/file dialogs and window close/reopen on the Mac (since 2026-10-27)
