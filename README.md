@@ -1,61 +1,66 @@
 # Cicada
 
-Send text and small files between a Mac and an Android phone through their speakers and microphones. A low tower-like drone opens into rapid cicada grains. The grains carry the data through differences in their relative loudness.
+Copy something on your Mac. Send it to your Android phone as insect chatter.
 
-Hear an encoded message: [`samples/delights.wav`](samples/delights.wav) carries “Hello from Cicada”. All audio is generated procedurally; no reference recording is bundled.
+Cicada turns text and small files into sound, plays it through one device’s speaker, and decodes it through the other’s microphone. Paste a message, send it, then copy it on the other side. A neon waterfall and glowing progress bar follow the transfer.
 
-## Android
+**[Download the Mac app and Android APK](https://github.com/markrpg/cicada/releases/tag/v0.2)**
 
-Version 0.2 requires Android 10 or newer. Install the APK on the phone, then allow microphone access when you tap Listen. Both devices must use the updated sound protocol; the original 0.1 APK is incompatible.
+## Why I built it
 
-Build with JDK 17 and the Android SDK:
+The idea came from reports about OpenAI’s red-team agents finding ways to communicate without a network or shared files. [That experiment used CPU-cache timing](https://www.tomshardware.com/tech-industry/artificial-intelligence/openais-isolated-red-team-ai-agents-built-a-hidden-cpu-cache-channel-to-talk-with-no-network-or-shared-files-exploited-cpu-cache-timing-to-bypass-microvm-sandboxes). It got me thinking about another channel computers already have: speakers and microphones.
+
+The sound inspiration came from [the tower control sound in Westworld](https://www.youtube.com/watch?v=zYAZIbsmvP0). I wanted a transfer to feel like two machines chattering to each other. The audio is generated in code.
+
+[Hear “Hello from Cicada” encoded as sound.](samples/delights.wav)
+
+## Try it
+
+1. Install **Cicada.app** on your Mac and **cicada-0.2.apk** on your Android phone from the download link above.
+2. Open both apps and put the devices close together.
+3. Tap **Listen** on the receiving device and allow microphone access.
+4. Type or paste a short message on the other device, then press **Send**.
+5. Watch it arrive, then tap **Copy**.
+
+You can also pick a small file to send. Received files have a save button.
+
+On Mac, Cicada lives in the menu bar under the waveform icon. Closing its window stops the audio; the icon stays available to reopen it.
+
+Android needs version 10 or newer and may ask you to allow installation from your browser. The Mac app is ad-hoc signed, so a downloaded copy may need approval in **System Settings → Privacy & Security**. Both devices need version 0.2; the original APK uses a different sound protocol.
+
+## How much can it send?
+
+Start with a sentence. This is slow: a full 700-byte packet takes about 169 seconds. Compression can fit larger original text or files into that limit. Each transmission begins with a short drone before the data-bearing chatter starts.
+
+The payload travels through sound. Neither installed app needs a network connection to transfer it.
+
+## Under the hood
+
+The transmitter generates pairs of short, resonant cicada grains. Their relative loudness encodes the data. Reed–Solomon error correction and a CRC-32 check help the receiver recover and verify the message.
+
+The Mac and Android apps share the same JavaScript modem and neon interface. The Mac shell uses Swift and WebKit; Android uses a WebView.
+
+Sixteen automated tests pass, including audio-rate conversion, clock drift, noise, echo, interrupted transfers and WAV round trips. Real Mac↔Android acoustic testing is still pending. The Mac WebView’s worklet passed a synthetic-input check; real microphone capture, native dialogs and close/reopen behavior still need hands-on verification. Intel execution has not been tested.
+
+## Build it
+
+Android requires JDK 17 and the Android SDK:
 
 ```bash
 cd android
 ./gradlew assembleDebug
 ```
 
-The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk` from the project root.
-
-## Mac menu-bar app
-
-Build with Xcode command-line tools:
+Mac requires Xcode command-line tools:
 
 ```bash
 bash macos/build.sh
 open macos/build/Cicada.app
 ```
 
-The waveform menu-bar icon opens Cicada. Closing the window tears down its WebView and stops playback/capture; the menu-bar icon remains. Use its Quit item to exit.
-
-The app bundles the same web assets as Android and serves them through a loopback-only asset listener. It needs no Python process or browser setup. Clipboard and file dialogs use native APIs.
-
-The build contains arm64 and x86_64 code and uses ad-hoc signing. It has no Developer ID publisher identity or Apple notarization. Downloaded copies may need approval in System Settings → Privacy & Security. Intel execution and the macOS 13 deployment target have not been runtime-tested.
-
-## Browser
-
-```bash
-python3 tools/serve.py
-```
-
-Open `https://localhost:8443` on the Mac. To use a phone browser, open the LAN address printed by the server and accept its self-signed certificate. The network serves the page; text and file payloads travel through sound.
-
-Tap Listen on the receiver, then send text or pick a file on the other device. Paste and Copy support clipboard transfers.
-
-## Limits
-
-The raw encoded-byte rate is 5 bytes/s before error correction. A 700-byte packet takes about 169 seconds including the drone and synchronization. The packet limit applies after compression, so compressible text or files can start larger. Playback is bounded by a three-minute duration limit and a 128 MiB combined PCM/playback allocation budget.
-
-The header uses six Reed–Solomon parity bytes. Payload blocks have up to 128 data bytes and 16 parity bytes, interleaved across the transmission. CRC-32 checks the reconstructed payload. The receiver tracks timing to accommodate different device audio clocks.
-
-## Checks and remaining tests
-
-`npm test` passes 16 tests covering all byte values, rate conversion, positive/negative clock drift, noise and echo, burst corruption, interrupted frames, output bounds and 16-bit WAV round trips. Real Mac-to-Android acoustic performance still needs device testing.
-
-The native Mac WebView passed secure-context and AudioWorklet sample-delivery checks with a synthetic input. Real microphone permission/capture, native clipboard/file dialogs and window close/reopen behavior still need interactive verification. Android build and lint complete; Gradle reports an SDK XML-version warning.
+To use a browser instead, run `python3 tools/serve.py` and open the HTTPS address it prints. The server supplies the page; the transfer still goes over sound.
 
 ```bash
 npm test
 node tools/render-wav.js "your text" out.wav
 ```
-
