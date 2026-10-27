@@ -1,44 +1,37 @@
-// Cicada modem: bytes as insect chatter.
-//
-// Frame:   lead silence · preamble (buzzing up-chirp + down-chirp) · gap · symbols · tail
-// Symbol:  one byte. The high nibble picks one of 16 tones in band A, the low nibble one of
-//          16 tones in band B. Each band plays a train of short ticks, band B's ticks falling
-//          between band A's, which gives the cricket-like trill.
-// Symbols: 9 header symbols (kind, length hi, length lo + 6 Reed–Solomon parity), then the
-//          body: payload + CRC-32, cut into Reed–Solomon blocks and interleaved so a burst
-//          of noise spreads over several blocks.
+// Tower protocol v2: a low drone opens into a data-bearing resonant cicada buzz.
+// Header and payload use Reed–Solomon, interleaving, whitening and CRC-32.
 
 import { fft, nextPow2 } from './fft.js';
 import * as rs from './rs.js';
+import { DIBIT_SECONDS, BUZZ_FREQUENCIES, SYNC_WORD, writeBuzz, writeDrone } from './tower-synth.js';
 
-export const CONFIG = {
-  bandA: 1650,          // Hz, tone 0 of the high-nibble band
-  bandB: 4500,          // Hz, tone 0 of the low-nibble band
-  step: 156.25,         // Hz between tones: a null of the 4-tick pulse train's spectrum
-  pulses: 4,
-  pulsePeriod: 0.016,
-  pulseOn: 0.009,
-  bandBOffset: 0.008,
-  symbolDur: 0.08,
-  sweep: 50,            // Hz each tick rises across its length
-  chirpLow: 1400,
-  chirpHigh: 7200,
-  chirpDur: 0.1,
-  preambleGap: 0.03,
-  amp: 0.45,
+export const CONFIG = Object.freeze({
+  protocol: 2,
+  symbolDur: DIBIT_SECONDS * 4, // one encoded byte, four physical dibits
+  intro: 5.75,
+  preambleGap: 0.035,
   lead: 0.05,
-  tail: 0.12,
+  tail: 0.35,
   headerParity: 6,
-  blockData: 128,       // max data bytes per body block
-  blockParity: 16,      // corrects 8 bad symbols per block
-  maxPayload: 65535,
-};
+  blockData: 128,
+  blockParity: 16,
+  maxPayload: 1000,
+  maxFrameSeconds: 180,
+  maxPlaybackBytes: 128 * 1024 * 1024,
+  frequencyLow: 50,
+  frequencyHigh: 8000,
+});
 
 const HEADER_DATA = 3;
 const HEADER_SYMBOLS = HEADER_DATA + CONFIG.headerParity;
 
 export function toneFreq(band, k) {
-  return (band === 0 ? CONFIG.bandA : CONFIG.bandB) + k * CONFIG.step;
+  return BUZZ_FREQUENCIES[k];
+}
+
+function validate(length, sr = 48000) {
+  if (!Number.isInteger(length) || length < 0 || length > CONFIG.maxPayload) throw new RangeError(`Payload must be 0–${CONFIG.maxPayload} bytes`);
+  if (!Number.isFinite(sr) || sr < 8000 || sr > 96000) throw new RangeError('Sample rate must be between 8000 and 96000 Hz');
 }
 
 const CRC_TABLE = (() => {
@@ -83,6 +76,7 @@ function bodyLayout(length) {
 }
 
 export function symbolCount(length) {
+  validate(length);
   return HEADER_SYMBOLS + bodyLayout(length).order.length;
 }
 
@@ -103,66 +97,48 @@ export function frameSymbols(payload, kind = 0) {
 
 const preambles = new Map();
 export function preamble(sr) {
+  validate(0, sr);
   let out = preambles.get(sr);
   if (out) return out;
-  const { chirpLow: lo, chirpHigh: hi, chirpDur: T } = CONFIG;
-  const n = Math.round(T * sr), ramp = Math.round(0.002 * sr);
-  const mu = (hi - lo) / T;
-  out = new Float32Array(2 * n);
-  for (let i = 0; i < n; i++) {
-    const t = i / sr;
-    const buzz = 0.75 + 0.25 * Math.cos(2 * Math.PI * 150 * t);
-    const edge = Math.min(1, i / ramp, (n - 1 - i) / ramp);
-    out[i] = Math.sin(2 * Math.PI * (lo * t + 0.5 * mu * t * t)) * buzz * edge;
-    out[n + i] = Math.sin(2 * Math.PI * (hi * t - 0.5 * mu * t * t)) * buzz * edge;
-  }
+  out = new Float32Array(Math.round(SYNC_WORD.length * DIBIT_SECONDS * sr));
+  SYNC_WORD.forEach((state, i) => writeBuzz(out, Math.round(i * DIBIT_SECONDS * sr), state, sr, i + 1));
   preambles.set(sr, out);
   return out;
 }
 
-function writeTick(out, start, f, sr) {
-  const n = Math.round(CONFIG.pulseOn * sr);
-  const ramp = Math.max(1, Math.round(0.0012 * sr));
-  const f0 = f - CONFIG.sweep / 2, k = CONFIG.sweep / CONFIG.pulseOn;
-  for (let i = 0; i < n; i++) {
-    const t = i / sr;
-    let env = 1 - 0.45 * (i / n); // fades across the tick like a stridulation click
-    if (i < ramp) env *= 0.5 - 0.5 * Math.cos((Math.PI * i) / ramp);
-    else if (i > n - ramp) env *= 0.5 - 0.5 * Math.cos((Math.PI * (n - i)) / ramp);
-    out[start + i] += CONFIG.amp * env * Math.sin(2 * Math.PI * (f0 * t + 0.5 * k * t * t));
-  }
-}
-
-function writeSymbol(out, start, byte, sr) {
-  const fa = toneFreq(0, byte >> 4), fb = toneFreq(1, byte & 15);
-  for (let p = 0; p < CONFIG.pulses; p++) {
-    writeTick(out, start + Math.round(p * CONFIG.pulsePeriod * sr), fa, sr);
-    writeTick(out, start + Math.round((CONFIG.bandBOffset + p * CONFIG.pulsePeriod) * sr), fb, sr);
-  }
+function writeSymbol(out, start, byte, sr, index) {
+  for (let d = 0; d < 4; d++) writeBuzz(out, start + Math.round(d * DIBIT_SECONDS * sr), (byte >> (6 - 2 * d)) & 3, sr, index * 4 + d + 1);
 }
 
 const symbolStart = (i, sr) => Math.round(i * CONFIG.symbolDur * sr);
 
 function layoutSamples(nSymbols, sr) {
   const lead = Math.round(CONFIG.lead * sr);
-  const dataStart = lead + preamble(sr).length + Math.round(CONFIG.preambleGap * sr);
+  const syncStart = lead + Math.round(CONFIG.intro * sr);
+  const dataStart = syncStart + preamble(sr).length + Math.round(CONFIG.preambleGap * sr);
   const dataEnd = dataStart + symbolStart(nSymbols, sr);
-  return { lead, dataStart, dataEnd, total: dataEnd + Math.round(CONFIG.tail * sr) };
+  const total = dataEnd + Math.round(CONFIG.tail * sr);
+  // PCM and the AudioBuffer playback copy both need to fit this budget.
+  if (total / sr > CONFIG.maxFrameSeconds || total * 8 > CONFIG.maxPlaybackBytes) throw new RangeError('Transfer exceeds the three-minute or 128 MiB playback limit');
+  return { lead, syncStart, dataStart, dataEnd, total };
 }
 
-// Seconds from the start of the synthesized PCM.
 export function frameTiming(payloadLength, sampleRate = 48000) {
-  const s = layoutSamples(symbolCount(payloadLength), sampleRate);
-  return { symbols: symbolCount(payloadLength), total: s.total / sampleRate, dataStart: s.dataStart / sampleRate, dataEnd: s.dataEnd / sampleRate };
+  validate(payloadLength, sampleRate);
+  const symbols = symbolCount(payloadLength);
+  const s = layoutSamples(symbols, sampleRate);
+  return { symbols, total: s.total / sampleRate, introEnd: s.syncStart / sampleRate, dataStart: s.dataStart / sampleRate, dataEnd: s.dataEnd / sampleRate };
 }
 
 export function synthesize(payload, sr, kind = 0) {
+  validate(payload.length, sr);
   const symbols = frameSymbols(payload, kind);
   const pre = preamble(sr);
   const s = layoutSamples(symbols.length, sr);
   const out = new Float32Array(s.total);
-  for (let i = 0; i < pre.length; i++) out[s.lead + i] = 0.8 * pre[i];
-  symbols.forEach((b, i) => writeSymbol(out, s.dataStart + symbolStart(i, sr), b ^ mask(i), sr));
+  out.set(pre, s.syncStart);
+  symbols.forEach((b, i) => writeSymbol(out, s.dataStart + symbolStart(i, sr), b ^ mask(i), sr, i));
+  writeDrone(out, sr, s.dataEnd);
   return out;
 }
 
@@ -177,28 +153,42 @@ function power(x, start, n, f, sr) {
   return s1 * s1 + s2 * s2 - c * s1 * s2;
 }
 
-const PROBE = [-20, 0, 20];
-
-function strongestTone(x, start, n, band, sr) {
-  let best = 0, bestP = -1, second = 0;
-  for (let k = 0; k < 16; k++) {
-    const f = toneFreq(band, k);
-    let p = 0;
-    for (const d of PROBE) p += power(x, start, n, f + d, sr);
-    if (p > bestP) {
-      second = Math.max(second, bestP);
-      bestP = p;
-      best = k;
-    } else if (p > second) second = p;
+function dibit(x, start, sr) {
+  const skip = Math.round(0.004 * sr), n = Math.round((DIBIT_SECONDS - 0.008) * sr);
+  let best = 0, peak = -1, second = 0;
+  for (let k = 0; k < 4; k++) {
+    const p = power(x, start + skip, n, BUZZ_FREQUENCIES[k], sr);
+    if (p > peak) { second = peak; peak = p; best = k; }
+    else if (p > second) second = p;
   }
-  return { k: best, margin: bestP / (second + 1e-12) };
+  let energy = 0;
+  for (let j = 0; j < n; j++) energy += x[start + skip + j] ** 2;
+  return { state: best, peak, margin: peak / (second + 1e-12), concentration: peak / (n * energy + 1e-12) };
 }
 
 export function decodeSymbol(x, start, sr) {
-  const n = Math.round(((CONFIG.pulses - 1) * CONFIG.pulsePeriod + CONFIG.pulseOn) * sr);
-  const a = strongestTone(x, start, n, 0, sr);
-  const b = strongestTone(x, start + Math.round(CONFIG.bandBOffset * sr), n, 1, sr);
-  return { byte: (a.k << 4) | b.k, margin: Math.min(a.margin, b.margin) };
+  let byte = 0, margin = Infinity, concentration = 0;
+  for (let d = 0; d < 4; d++) {
+    const r = dibit(x, start + Math.round(d * DIBIT_SECONDS * sr), sr);
+    byte = (byte << 2) | r.state;
+    margin = Math.min(margin, r.margin);
+    concentration += r.concentration / 4;
+  }
+  return { byte, margin, concentration };
+}
+
+// Byte boundaries have a brief amplitude dip. Track it without relying on the
+// data state; this keeps long frames aligned when the two audio clocks drift.
+function trackBoundary(x, start, sr, limit) {
+  const half = Math.round(0.0015 * sr), step = Math.max(1, Math.round(0.0002 * sr));
+  const range = Math.round(0.0025 * sr);
+  let best = start, energy = Infinity;
+  for (let p = Math.max(half, start - range); p <= Math.min(limit - half, start + range); p += step) {
+    let e = 0;
+    for (let j = -half; j <= half; j++) { const v = x[p + j] - (x[p + j - 1] || 0); e += v * v; }
+    if (e < energy) { energy = e; best = p; }
+  }
+  return best;
 }
 
 // Streaming decoder. Finds preambles by FFT cross-correlation, then reads symbols at
@@ -221,8 +211,8 @@ export class Receiver {
     this.im = new Float64Array(this.N);
     this.cum = new Float64Array(this.N + 1);
     this.gap = Math.round(CONFIG.preambleGap * sampleRate);
-    this.symSpan = Math.round((CONFIG.bandBOffset + (CONFIG.pulses - 1) * CONFIG.pulsePeriod + CONFIG.pulseOn) * sampleRate);
-    this.threshold = 0.25;
+    this.symSpan = Math.round(CONFIG.symbolDur * sampleRate);
+    this.threshold = 0.35;
     this.buf = new Float32Array(Math.max(this.N * 2, sampleRate * 8));
     this.len = 0;
     this.base = 0; // absolute sample index of buf[0]
@@ -243,7 +233,8 @@ export class Receiver {
 
   append(chunk) {
     if (this.len + chunk.length > this.buf.length) {
-      const drop = (this.frame ? this.frame.start : this.pos) - this.base;
+      const keep = this.frame ? this.frame.dataStart + symbolStart(this.frame.i, this.sr) + Math.round(this.frame.correction) - Math.round(0.01 * this.sr) : this.pos;
+      const drop = Math.max(0, Math.min(this.len, keep - this.base));
       if (drop > 0) {
         this.buf.copyWithin(0, drop, this.len);
         this.len -= drop;
@@ -291,15 +282,27 @@ export class Receiver {
       if (r > bestRho) { bestRho = r; best = l; }
     }
     const start = this.pos + best;
-    this.frame = { start, dataStart: start + M + this.gap, i: 0, symbols: [], header: null, rho: bestRho };
+    this.frame = { start, dataStart: start + M + this.gap, correction: 0, i: 0, symbols: [], header: null, rho: bestRho };
     return true;
   }
 
   stepFrame() {
     const f = this.frame;
-    const s = f.dataStart + symbolStart(f.i, this.sr);
-    if (s + this.symSpan > this.end) return false;
-    f.symbols.push(decodeSymbol(this.buf, s - this.base, this.sr).byte ^ mask(f.i));
+    const expected = f.dataStart + symbolStart(f.i, this.sr) + Math.round(f.correction);
+    if (expected + this.symSpan + Math.round(0.004 * this.sr) > this.end) return false;
+    const local = expected - this.base;
+    const boundary = trackBoundary(this.buf, local, this.sr, this.len);
+    f.correction += 0.65 * (boundary - local);
+    const s = f.dataStart + symbolStart(f.i, this.sr) + Math.round(f.correction);
+    const decoded = decodeSymbol(this.buf, s - this.base, this.sr);
+    f.quiet = decoded.concentration < 0.02 ? (f.quiet || 0) + 1 : 0;
+    if (f.quiet >= 8) {
+      if (f.header) this.on.message?.({ kind: f.header.kind, payload: this.preview(f), ok: false, fixed: 0 });
+      this.frame = null;
+      this.pos = s + this.symSpan;
+      return true;
+    }
+    f.symbols.push(decoded.byte ^ mask(f.i));
     f.i++;
     if (f.i === HEADER_SYMBOLS) {
       const header = this.readHeader(f.symbols);
@@ -326,7 +329,9 @@ export class Receiver {
   readHeader(symbols) {
     try {
       const { data } = rs.decode(Uint8Array.from(symbols), CONFIG.headerParity);
-      return { kind: data[0], length: (data[1] << 8) | data[2] };
+      const length = (data[1] << 8) | data[2];
+      if (length > CONFIG.maxPayload || data[0] > 3) return null;
+      return { kind: data[0], length };
     } catch {
       return null;
     }
