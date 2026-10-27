@@ -1,0 +1,1 @@
+- M3: [human-test] after the updated builds are ready, run both devices together and count ten messages each way at 30 cm and 1 m (since 2026-10-27)

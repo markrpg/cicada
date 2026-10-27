@@ -1,4 +1,16 @@
 .cert/
 .scratch/
+.claude/
+.env
+.env.*
+*.pem
+*.key
+*.jks
+*.keystore
+*.mobileprovision
+*.p12
+*.log
+macos/build/
+.worktrees/
 node_modules/
 .DS_Store

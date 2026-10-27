@@ -1,13 +1,17 @@
 # Cicada roadmap
 
-Goal: a Mac and an Android phone send text and files to each other as insect-like chirps, reliably enough to film.
+Goal: a Mac and an Android phone send text and files as reference-C-style tower/cicada sound, with neon visuals and a Mac menu-bar app. Keep private media, credentials and machine-local data out of public artifacts.
 
 ## Milestones
+Lanes: 2
 
 | ID | Milestone | Status | Check | Commit |
 |----|-----------|--------|-------|--------|
-| M1 | Modem: chirp preamble, two-band tick-train symbols, Reed–Solomon + CRC-32, streaming receiver, text/file packets | done | `npm test` passes (rate change + drift + echo + noise, back-to-back frames, 1 KB file through a 300 ms burst, noise-only, packets) | d205178 |
-| M2 | Web app: listen/send, paste/copy, files, live spectrogram, progress bars, HTTPS LAN server | done | page loads with no console errors on desktop and mobile widths | 0a76460 |
-| M3 | Over-the-air test Mac ↔ Android | todo | 10 messages each way at 30 cm and 1 m, success rate recorded | |
-| M4 | Speed presets (faster symbols when devices are close) | todo | tests pass at each preset; M3 success rate holds for the fast preset at 30 cm | |
-| M5 | Filming mode: full-screen visuals, big type, record-friendly layout | todo | screenshot at phone and laptop sizes | |
+| M1 | Original modem and text/file packets | done | Nine original modem/packet tests passed | d205178 |
+| M2 | Neon web UI and original Android APK | done | Browser receive checked at desktop/mobile widths; debug APK built | 0a76460 |
+| M3 | Over-the-air Mac ↔ Android test | parked | Ten messages each way at 30 cm and 1 m, success rate recorded | |
+| M6 | Reference-C procedural data-bearing buzz | doing | New signal decodes with rate conversion/noise/echo; quantized WAV round-trip; allocation/level bounds | |
+| M7 | Native Mac menu-bar shell and audio lifecycle | doing | Standalone app launches; loopback worklet proof; close/reopen stops audio safely | |
+| M8 | Integrate, package and privacy-review both apps | todo | Updated APK and Mac ZIP inspected; browser regressions checked; private artifact/history scan reviewed | |
+| M4 | Speed presets | todo | Each preset passes modem tests and real-device success check | |
+| M5 | Filming mode refinements | todo | Screenshot at phone and laptop sizes | |
