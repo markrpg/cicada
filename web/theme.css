@@ -1,0 +1,7 @@
+.theme-controls { display:flex; align-items:center; gap:12px; padding:0 8px 12px; font:13px system-ui,sans-serif; }
+.theme-controls label { color:#b4b1c2; }
+.theme-controls select { min-width:0; max-width:100%; min-height:44px; flex:1; padding:8px 12px; border:1px solid #514866; border-radius:12px; color:#f4f0ff; background:#100e19; font:inherit; }
+.theme-controls select:focus-visible { outline:2px solid #b4ff7d; outline-offset:3px; }
+body[data-theme="alien"] .composer { border-color:#67b57b; box-shadow:0 0 24px #2a713229; }
+body[data-theme="alien"] .word { color:#b0ef94; font-family:ui-monospace,monospace; letter-spacing:.08em; }
+body[data-theme="alien"] .theme-controls select { color:#c9f3a5; border-color:#547d4e; background:#0c160f; }

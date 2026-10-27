@@ -1,4 +1,4 @@
-import { CONFIG, synthesize, frameTiming, Receiver } from './modem.js';
+import { THEMES, CONFIG, synthesize, frameTiming, Receiver } from './modem.js';
 import { packText, packFile, unpack, previewText } from './packet.js';
 import { readClipboard, writeClipboard, saveBlob } from './platform.js';
 import { Spectrogram } from './ui-spectro.js';
@@ -31,6 +31,18 @@ const spectro = new Spectrogram($('spectro'), $('bloom'));
 const fx = new FX($('fx'));
 const feed = new Feed($('feed'), $('empty'));
 const SYM = CONFIG.symbolDur || 0.08;
+
+const themeSelect = $('theme');
+let selectedTheme = 'cicada';
+try { const saved = localStorage.getItem('cicada.theme'); if (THEMES.some(t => t.id === saved)) selectedTheme = saved; } catch {}
+function applyTheme() { themeSelect.value = selectedTheme; document.body.dataset.theme = selectedTheme; }
+applyTheme();
+themeSelect.addEventListener('change', () => {
+  selectedTheme = themeSelect.value;
+  applyTheme();
+  try { localStorage.setItem('cicada.theme', selectedTheme); } catch {}
+  if (staged?.bytes) { const t = frameTiming(staged.bytes.length, sampleRate(), selectedTheme); ui.stagedMeta.textContent = `${fmtBytes(staged.file.size)} · ${fmtTime(t.total)} to send`; }
+});
 
 // ---------------------------------------------------------------- audio
 
@@ -277,12 +289,13 @@ async function save(blob, name, btn) {
 const tx = { cur: null, queue: [], windows: [] };
 
 function enqueue(item) {
+  item.theme ??= selectedTheme;
   const len = item.bytes.length;
   const card = new Card('out', { what: item.label, bytes: len });
   if (item.text != null) card.showText(item.text);
   else card.showFile(item.fileInfo);
   item.card = card;
-  const t = frameTiming(len, sampleRate());
+  const t = frameTiming(len, sampleRate(), item.theme);
   card.progress(0, symbolsOf(t), `0 B / ${fmtBytes(len)} · ${fmtTime(t.total)}`);
   feed.add(card);
   tx.queue.push(item);
@@ -296,7 +309,7 @@ function pump() {
   const ctx = ensureCtx();
   let pcm;
   try {
-    pcm = synthesize(item.bytes, ctx.sampleRate, item.kind);
+    pcm = synthesize(item.bytes, ctx.sampleRate, item.kind, item.theme);
   } catch (err) {
     item.card.finish(false, 'Failed');
     toast(err.message || String(err));
@@ -310,7 +323,7 @@ function pump() {
   src.connect(ctx.destination);
   src.connect(A.txAn);
   const t0 = ctx.currentTime + 0.06;
-  const timing = frameTiming(item.bytes.length, ctx.sampleRate);
+  const timing = frameTiming(item.bytes.length, ctx.sampleRate, item.theme);
   const win = { start: t0, end: t0 + timing.total + 0.6 };
   tx.windows.push(win);
   const cur = { item, src, t0, timing, win, syms: symbolsOf(timing), lastSym: 0, bloomed: false, stopped: false };
@@ -329,7 +342,7 @@ function pump() {
 
 function addResend(item) {
   item.card.action('Resend', 'resend', () =>
-    enqueue({ kind: item.kind, bytes: item.bytes, label: item.label, text: item.text, fileInfo: item.fileInfo }),
+    enqueue({ kind: item.kind, bytes: item.bytes, label: item.label, text: item.text, fileInfo: item.fileInfo, theme: item.theme }),
   );
 }
 
@@ -410,7 +423,7 @@ async function stageFile(file) {
     if (staged !== s) return;
     s.kind = p.kind;
     s.bytes = p.bytes;
-    const t = frameTiming(p.bytes.length, sampleRate());
+    const t = frameTiming(p.bytes.length, sampleRate(), selectedTheme);
     ui.stagedMeta.textContent = `${fmtBytes(file.size)} · ${fmtTime(t.total)} to send`;
   } catch (err) {
     if (staged !== s) return;

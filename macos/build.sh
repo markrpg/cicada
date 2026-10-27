@@ -21,5 +21,5 @@ done
 xcrun lipo -create "$OUT/Cicada-arm64" "$OUT/Cicada-x86_64" -output "$APP/Contents/MacOS/Cicada"
 codesign --force --sign - --options runtime --entitlements "$ROOT/macos/Cicada.entitlements" "$APP"
 codesign --verify --strict "$APP"
-ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/Cicada-0.2-mac.zip"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/Cicada-0.3-mac.zip"
 printf 'Built %s\n' "$APP"
