@@ -3,7 +3,7 @@
 
 import { fft, nextPow2 } from './fft.js';
 import * as rs from './rs.js';
-import { DIBIT_SECONDS, BUZZ_FREQUENCIES, SYNC_WORD, writeBuzz, writeDrone, buzzTemplate } from './tower-synth.js';
+import { DIBIT_SECONDS, SYNC_WORD, writeBuzz, writeDrone, buzzTemplate, GRAIN_RATIOS } from './tower-synth.js';
 
 export const CONFIG = Object.freeze({
   protocol: 2,
@@ -15,7 +15,7 @@ export const CONFIG = Object.freeze({
   headerParity: 6,
   blockData: 128,
   blockParity: 16,
-  maxPayload: 1000,
+  maxPayload: 700,
   maxFrameSeconds: 180,
   maxPlaybackBytes: 128 * 1024 * 1024,
   frequencyLow: 50,
@@ -24,10 +24,6 @@ export const CONFIG = Object.freeze({
 
 const HEADER_DATA = 3;
 const HEADER_SYMBOLS = HEADER_DATA + CONFIG.headerParity;
-
-export function toneFreq(band, k) {
-  return BUZZ_FREQUENCIES[k];
-}
 
 function validate(length, sr = 48000) {
   if (!Number.isInteger(length) || length < 0 || length > CONFIG.maxPayload) throw new RangeError(`Payload must be 0–${CONFIG.maxPayload} bytes`);
@@ -142,26 +138,29 @@ export function synthesize(payload, sr, kind = 0) {
   return out;
 }
 
-function dibit(x, start, sr) {
-  let best = 0, peak = -1, second = 0;
-  const n = Math.round(DIBIT_SECONDS * sr);
-  let energy = 0;
-  for (let j = 0; j < n; j++) energy += x[start + j] ** 2;
-  for (let k = 0; k < 4; k++) {
-    const { re, im, norm } = buzzTemplate(k, sr);
-    let a = 0, b = 0;
-    for (let j = 0; j < n; j++) { a += x[start + j] * re[j]; b += x[start + j] * im[j]; }
-    const p = (a * a + b * b) / (norm + 1e-12);
-    if (p > peak) { second = peak; peak = p; best = k; }
-    else if (p > second) second = p;
+function dibit(x, start, sr, seed) {
+  const { re, im } = buzzTemplate(seed, sr), n = re.length;
+  const skip = Math.round(0.008 * sr), tail = Math.round(0.002 * sr);
+  let a = 0, b = 0, c = 0, d = 0, energy = 0, norm = 0;
+  for (let i = skip; i < n - tail; i++) {
+    const u = x[start + i], v = x[start + n + i];
+    a += u * re[i]; b += u * im[i]; c += v * re[i]; d += v * im[i];
+    energy += u * u + v * v; norm += re[i] * re[i] + im[i] * im[i];
   }
-  return { state: best, peak, margin: peak / (second + 1e-12), concentration: peak / (energy + 1e-12) };
+  const first = a * a + b * b, second = c * c + d * d;
+  const ratio = Math.sqrt((first + 1e-15) / (second + 1e-15));
+  let best = 0, distance = Infinity;
+  for (let k = 0; k < 4; k++) {
+    const e = Math.abs(Math.log(ratio / GRAIN_RATIOS[k]));
+    if (e < distance) { best = k; distance = e; }
+  }
+  return { state: best, margin: 1 / (distance + 0.01), concentration: (first + second) / (norm * energy + 1e-12) };
 }
 
-export function decodeSymbol(x, start, sr) {
+export function decodeSymbol(x, start, sr, index = 0) {
   let byte = 0, margin = Infinity, concentration = 0;
   for (let d = 0; d < 4; d++) {
-    const r = dibit(x, start + Math.round(d * DIBIT_SECONDS * sr), sr);
+    const r = dibit(x, start + Math.round(d * DIBIT_SECONDS * sr), sr, index * 4 + d + 1);
     byte = (byte << 2) | r.state;
     margin = Math.min(margin, r.margin);
     concentration += r.concentration / 4;
@@ -169,13 +168,13 @@ export function decodeSymbol(x, start, sr) {
   return { byte, margin, concentration };
 }
 
-function trackBoundary(x, start, sr) {
+function trackBoundary(x, start, sr, index) {
   const step = Math.max(1, Math.round(0.000125 * sr));
   let best = start, score = -1;
   for (let offset = -6; offset <= 6; offset++) {
     const p = start + offset * step;
     if (p < 0) continue;
-    const r = decodeSymbol(x, p, sr);
+    const r = decodeSymbol(x, p, sr, index);
     if (r.concentration > score) { score = r.concentration; best = p; }
   }
   return score > 0.12 ? best : start;
@@ -281,10 +280,10 @@ export class Receiver {
     const expected = f.dataStart + symbolStart(f.i, this.sr) + Math.round(f.correction);
     if (expected + this.symSpan + Math.round(0.004 * this.sr) > this.end) return false;
     const local = expected - this.base;
-    const boundary = trackBoundary(this.buf, local, this.sr, this.len);
+    const boundary = trackBoundary(this.buf, local, this.sr, f.i);
     f.correction += boundary - local;
     const s = f.dataStart + symbolStart(f.i, this.sr) + Math.round(f.correction);
-    const decoded = decodeSymbol(this.buf, s - this.base, this.sr);
+    const decoded = decodeSymbol(this.buf, s - this.base, this.sr, f.i);
     f.quiet = decoded.concentration < 0.05 ? (f.quiet || 0) + 1 : 0;
     if (f.quiet >= 8) {
       if (f.header) this.on.message?.({ kind: f.header.kind, payload: this.preview(f), ok: false, fixed: 0 });

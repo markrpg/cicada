@@ -85,12 +85,12 @@ test('two frames back to back', () => {
   assert.ok(got.messages.every((m) => m.ok));
 });
 
-test('a 1 KB file survives a burst of noise', () => {
+test('a maximum-size file survives a burst of noise', () => {
   const r = rng(42);
-  const file = Uint8Array.from({ length: 1000 }, () => (r() * 256) | 0);
+  const file = Uint8Array.from({ length: CONFIG.maxPayload }, () => (r() * 256) | 0);
   const sr = 48000;
   const y = air(synthesize(file, sr, 2), { from: sr, to: sr, seed: 3 });
-  const burstAt = Math.round((0.4 + frameTiming(1000, sr).dataStart + 20) * sr);
+  const burstAt = Math.round((0.4 + frameTiming(CONFIG.maxPayload, sr).dataStart + 20) * sr);
   for (let i = 0; i < sr * 0.3; i++) y[burstAt + i] += (r() - 0.5) * 3; // 300 ms clap that forces symbol errors
   const got = listen(y, sr);
   assert.equal(got.messages.length, 1);
@@ -116,15 +116,15 @@ test('every possible byte survives the resonant buzz detector at both rates', ()
   for (const sr of [44100, 48000]) {
     for (let byte = 0; byte < 256; byte++) {
       const out = new Float32Array(Math.ceil(CONFIG.symbolDur * sr) + 8);
-      for (let d = 0; d < 4; d++) writeBuzz(out, Math.round(d * DIBIT_SECONDS * sr), (byte >> (6 - 2 * d)) & 3, sr, byte + d);
-      assert.equal(decodeSymbol(out, 0, sr).byte, byte);
+      for (let d = 0; d < 4; d++) writeBuzz(out, Math.round(d * DIBIT_SECONDS * sr), (byte >> (6 - 2 * d)) & 3, sr, byte * 4 + d + 1);
+      assert.equal(decodeSymbol(out, 0, sr, byte).byte, byte);
     }
   }
 });
 
 test('long binary transfer tracks positive and negative clock drift', () => {
   const r = rng(327);
-  const bytes = Uint8Array.from({ length: 1000 }, () => r() * 256 | 0);
+  const bytes = Uint8Array.from({ length: CONFIG.maxPayload }, () => r() * 256 | 0);
   for (const drift of [1.00008, 0.99992]) {
     const got = listen(air(synthesize(bytes, 48000, 2), { from: 48000, to: 44100, drift, snrDb: 3, seed: 18 }), 44100);
     assert.equal(got.messages.length, 1);
@@ -183,8 +183,8 @@ test('uncorrectable payload damage is reported, not delivered as good data', () 
 
 test('a truncated long frame times out and the next transmission is acquired', () => {
   const sr = 48000;
-  const long = synthesize(new Uint8Array(1000), sr);
-  const cut = Math.round((frameTiming(1000, sr).dataStart + 3) * sr);
+  const long = synthesize(new Uint8Array(CONFIG.maxPayload), sr);
+  const cut = Math.round((frameTiming(CONFIG.maxPayload, sr).dataStart + 3) * sr);
   const bytes = enc.encode('after interruption');
   const got = listen(concat(long.subarray(0, cut), new Float32Array(sr * 2), synthesize(bytes, sr), new Float32Array(sr)), sr);
   assert.equal(got.messages.filter((m) => m.ok).length, 1);

@@ -1,45 +1,54 @@
 // Procedural tower drone and resonant tymbal buzz. No recorded audio is embedded.
-export const DIBIT_SECONDS = 0.035;
-export const BUZZ_FREQUENCIES = [2800, 2800, 2800, 2800];
+export const DIBIT_SECONDS = 0.05;
 export const SYNC_WORD = [0, 3, 1, 0, 2, 2, 3, 0, 1, 3, 3, 2, 0, 2, 1, 1];
 
 function random(seed) {
   return () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
 }
 
-// Four orthogonal phase patterns share one carrier and the same insect-like
-// pulse envelope. Data changes the texture, never jumps between musical pitches.
-const codes = [[1, 1, 1, 1], [1, -1, 1, -1], [1, 1, -1, -1], [1, -1, -1, 1]];
-const pn = [1, -1, 1, 1, -1, -1, 1, -1, 1, -1, -1, -1, 1, 1, -1, 1, 1, -1, -1, 1, -1, 1, 1, 1, -1, 1, -1, -1];
-const templates = new Map();
-
-export function buzzTemplate(state, sr) {
-  const key = `${state}:${sr}`;
-  if (templates.has(key)) return templates.get(key);
-  const n = Math.round(DIBIT_SECONDS * sr);
+// Data changes the relative loudness of two copies of the same short tymbal
+// grain. Pitch, pulse rate and random ringing remain independent of the data.
+export const GRAIN_RATIOS = [0.4, 0.74, 1 / 0.74, 2.5];
+const grains = new Map();
+export function buzzTemplate(seed, sr) {
+  const key = `${seed}:${sr}`;
+  if (grains.has(key)) return grains.get(key);
+  const n = Math.round(DIBIT_SECONDS * sr / 2);
   const re = new Float32Array(n), im = new Float32Array(n);
-  let norm = 0;
-  for (let i = 0; i < n; i++) {
-    const t = i / sr, chipTime = i / n * 28, chip = Math.min(27, Math.floor(chipTime)), f = chipTime - chip;
-    const edge = Math.min(1, i / (0.001 * sr), (n - 1 - i) / (0.001 * sr));
-    const tymbal = (0.35 + 0.65 * Math.exp(-2.5 * f)) * Math.min(1, f / 0.07, (1 - f) / 0.07);
-    const env = edge * tymbal * pn[chip] * codes[state][chip % 4];
-    re[i] = env * Math.cos(2 * Math.PI * 2800 * t);
-    im[i] = env * Math.sin(2 * Math.PI * 2800 * t);
-    norm += re[i] * re[i];
+  const r = random(seed);
+  let at = 0;
+  while (at < n) {
+    const f = 2500 + r() * 700, decay = 0.0009 + r() * 0.0007, gain = 0.6 + 0.4 * r(), phase = r() * 2 * Math.PI;
+    for (let j = 0; j < Math.round(decay * 5 * sr) && at + j < n; j++) {
+      const env = gain * Math.exp(-j / (decay * sr));
+      re[at + j] += env * Math.sin(2 * Math.PI * f * j / sr + phase);
+      im[at + j] += env * Math.cos(2 * Math.PI * f * j / sr + phase);
+    }
+    at += Math.max(1, Math.round(sr / (650 + r() * 250)));
   }
-  const result = { re, im, norm };
-  templates.set(key, result);
+  let peak = 0;
+  for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(re[i]), Math.abs(im[i]));
+  for (let i = 0; i < n; i++) {
+    const edge = Math.min(1, i / (0.001 * sr), (n - 1 - i) / (0.001 * sr));
+    re[i] *= edge / peak; im[i] *= edge / peak;
+  }
+  const result = { re, im };
+  // Bound memory during repeated sends and long receiving sessions.
+  if (grains.size >= 128) grains.delete(grains.keys().next().value);
+  grains.set(key, result);
   return result;
 }
 
 export function writeBuzz(out, start, state, sr, seed = 1) {
-  const { re } = buzzTemplate(state, sr);
-  const r = random(seed);
-  for (let i = 0; i < re.length && start + i < out.length; i++) {
-    out[start + i] += 0.6 * re[i] + 0.005 * (r() * 2 - 1);
+  const { re } = buzzTemplate(seed, sr);
+  const ratio = GRAIN_RATIOS[state], a = Math.sqrt(ratio), b = 1 / a;
+  for (let i = 0; i < re.length; i++) {
+    if (start + i < out.length) out[start + i] += 0.38 * a * re[i];
+    if (start + re.length + i < out.length) out[start + re.length + i] += 0.38 * b * re[i];
   }
 }
+
+const DRONE_PITCHES = [[297, 400, 471], [316, 414, 418], [262, 363, 418], [320, 363, 418]];
 
 export function writeDrone(out, sr, dataEnd) {
   const r = random(11);
@@ -51,7 +60,7 @@ export function writeDrone(out, sr, dataEnd) {
   let lp = 0, lp2 = 0;
   for (let i = 0; i < out.length; i++) {
     const t = i / sr;
-    const f = t < 2.6 ? [297, 400, 471] : t < 3.7 ? [316, 414, 418] : t < 6.3 ? [262, 363, 418] : [320, 363, 418];
+    const f = DRONE_PITCHES[t < 2.6 ? 0 : t < 3.7 ? 1 : t < 6.3 ? 2 : 3];
     const pulse = 0.75 - 0.25 * Math.cos(2 * Math.PI * t / 0.14);
     const a = 1 - Math.exp(-2 * Math.PI * 46 / sr);
     lp += a * (r() * 2 - 1 - lp);
