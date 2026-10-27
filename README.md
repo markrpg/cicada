@@ -4,7 +4,7 @@ Copy something on your Mac. Send it to your Android phone as insect chatter.
 
 Cicada turns text and small files into sound, plays it through one device’s speaker, and decodes it through the other’s microphone. Paste a message, send it, then copy it on the other side. A neon waterfall and glowing progress bar follow the transfer.
 
-**[Download the Mac app and Android APK](https://github.com/markrpg/cicada/releases/tag/v0.2)**
+**[Download the Mac app and Android APK](https://github.com/markrpg/cicada/releases/latest)**
 
 ## Why I built it
 
@@ -16,7 +16,7 @@ The sound inspiration came from [the tower control sound in Westworld](https://w
 
 ## Try it
 
-1. Install **Cicada.app** on your Mac and **cicada-0.2.apk** on your Android phone from the download link above.
+1. Install **Cicada.app** on your Mac and **cicada-0.3.apk** on your Android phone from the download link above.
 2. Open both apps and put the devices close together.
 3. Tap **Listen** on the receiving device and allow microphone access.
 4. Type or paste a short message on the other device, then press **Send**.
